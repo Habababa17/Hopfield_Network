@@ -11,15 +11,27 @@ def load_patterns(file_path):
 
 def train_hopfield(patterns, type = 'heb'):
     neuron_amount = patterns[0].size
+    M = patterns.shape[0]
     weights = np.zeros((neuron_amount, neuron_amount))
 
     #heb
-    for pattern in patterns:
-        weights += np.outer(pattern, pattern)
-    np.fill_diagonal(weights, 0)
-    return weights / patterns.shape[0]
-
-    #oji TODO
+    if type == 'heb':
+        for pattern in patterns:
+            weights += np.outer(pattern, pattern)
+        np.fill_diagonal(weights, 0)
+        return weights / M
+    #oja
+    elif type == 'oja':
+        learning_rate = 0.01
+        for pattern in patterns:
+            y = np.dot(weights, pattern)
+            for i in range(neuron_amount):
+                for j in range(neuron_amount):
+                    if i != j:
+                        weights[i, j] += (learning_rate / M) * y[i] * (pattern[j] - weights[i, j] * y[i])
+        return weights
+    else:
+        raise ValueError("Invalid type. Use 'heb' for Hebbian or 'oja' for Oja's rule.")
 
 def generate_sample(pattern, flip_probability=0.1):
 
@@ -136,7 +148,7 @@ def main(file_path, size):
     patterns = load_patterns(file_path)
     
     #training
-    weights = train_hopfield(patterns, 'heb')
+    weights = train_hopfield(patterns, 'oja') # heb/oja
 
     sample = generate_sample(patterns[2])
 
@@ -147,4 +159,4 @@ def main(file_path, size):
 
 if __name__ == "__main__":
 
-    main(os.getcwd() +'/klastrowanie/large-25x25.csv', (25, 25))
+    main(os.getcwd() +'/large-25x25.csv', (25, 25)) #main(os.getcwd() +'/klastrowanie/large-25x25.csv', (25, 25))

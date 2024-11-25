@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import random
+from PIL import Image
+import torch
 
 def load_patterns(file_path):
     patterns = pd.read_csv(file_path, header=None).to_numpy()
@@ -12,14 +14,18 @@ def load_patterns(file_path):
 def train_hopfield(patterns, type = 'heb'):
     neuron_amount = patterns[0].size
     M = patterns.shape[0]
-    weights = np.zeros((neuron_amount, neuron_amount))
-
+    weights = torch.zeros((neuron_amount, neuron_amount), device='cuda')
+    patterns = torch.tensor(patterns, dtype=torch.float32, device='cuda')
+    patternc = torch.rand(neuron_amount)
     #heb
     if type == 'heb':
         for pattern in patterns:
-            weights += np.outer(pattern, pattern)
+              # Create a tensor on the CPU
+            patternc = pattern.to('cuda')
+            weights += torch.ger(patternc, patternc)
+        weights = weights.cpu().numpy()
         np.fill_diagonal(weights, 0)
-        return weights / M
+        return weights/ M
     #oja
     elif type == 'oja':
         learning_rate = 0.001
@@ -49,18 +55,32 @@ def generate_sample(pattern, flip_probability=0.1):
 def is_stable(sample, weights):
     return (sync_forward(sample, weights) == sample).all()
 
-def async_update(weights, sample, patterns, timeout = 40000):
+def async_update(weights, sample, patterns, timeout = 50000):
     states = [sample]
     current_state = sample
     for iteration in range(timeout): 
         new_state = async_forward(current_state, weights)
         states.append(new_state.copy())
-        if is_stable(current_state, weights):
-            break
+        if iteration%100==0:
+            #print(iteration)
+            if is_stable(current_state, weights):
+                break
         current_state = new_state
     #print(len(states))
     return states
 
+def async_forward_GPU(state, weights):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    state_tensor = torch.tensor(state, dtype=torch.float32, device=device)
+    weights_tensor = torch.tensor(weights, dtype=torch.float32, device=device)
+
+    index = torch.randint(0, len(state), (1,), device=device).item()
+    weighted_sum = torch.dot(weights_tensor[index], state_tensor)
+
+    new_state = state_tensor.clone()
+    new_state[index] = 1 if weighted_sum >= 0 else -1
+
+    return new_state.cpu().numpy()
 def async_forward(state, weights):
     #update 1 neuron chosen randomly
     index = np.random.randint(len(state))  
@@ -113,14 +133,6 @@ def visualize_patterns(file_path, size):
 
 def plot_iteration_animation(states, size, step=50):
 
-    """
-    Plot the states of the system over multiple iterations as an animation.
-
-    Parameters:
-    - states: List of states over iterations (each state is a 1D array of -1 and 1 values)
-    - size: The dimensions of the state vector (rows, cols) that needs to be reshaped for display
-    - step: The interval between iterations to display (default is every 10th iteration)
-    """
     # Number of iterations (the length of the states list)
     num_iterations = len(states)
 
@@ -151,19 +163,7 @@ def plot_iteration_animation(states, size, step=50):
 
     # Display the animation
     plt.show()
-def evaluate_recovery(file_paths, sizes, noise_trials=10, noise_level=0.1):
-    """
-    Evaluate the recovery accuracy of Hopfield networks for different datasets.
-    
-    Parameters:
-    - file_paths: List of paths to pattern datasets (CSV files).
-    - sizes: List of sizes corresponding to the dimensions of the datasets (tuples).
-    - noise_trials: Number of noisy samples to generate per pattern for testing.
-    - noise_level: Probability of flipping each bit in the pattern.
-    
-    Returns:
-    - None (prints results for each dataset).
-    """
+def evaluate_recovery(file_paths, sizes, noise_trials=10, noise_level=0.01):
     results = []
 
     for file_path, size in zip(file_paths, sizes):
@@ -179,12 +179,12 @@ def evaluate_recovery(file_paths, sizes, noise_trials=10, noise_level=0.1):
         
 
         successful_recoveries = 0
-        total_trials = num_patterns * noise_trials
+        total_trials = noise_trials * len(patterns)
         
         for pattern in patterns:
             for _ in range(noise_trials):
                 noisy_sample = generate_sample(pattern, flip_probability=noise_level)
-                recovered_state = async_update(weights, noisy_sample, patterns, timeout=1000)[-1]
+                recovered_state = async_update(weights, noisy_sample, patterns)[-1]
                 if np.array_equal(recovered_state, pattern):
                     successful_recoveries += 1
         
@@ -194,9 +194,9 @@ def main(file_path, size):
     patterns = load_patterns(file_path)
     
     #training
-    weights = train_hopfield(patterns, 'oja') # heb/oja
+    weights = train_hopfield(patterns, 'heb') # heb/oja
 
-    sample = generate_sample(patterns[1])
+    sample = generate_sample(patterns[2])
 
     states = async_update(weights, sample, patterns)
 
@@ -279,7 +279,51 @@ def generate_stable_patterns(N, y):
             
 
         # Increase the number of patterns to generate next time
+def random_sample(file_path, size):
+    patterns = load_patterns(file_path)
+    
+    #training
+    weights = train_hopfield(patterns, 'heb') # heb/oja
 
+    sample = np.random.choice([-1, 1], size=len(patterns[0]))
+
+    states = async_update(weights, sample, patterns)
+
+    # Plot all the states
+    plot_iteration_animation(states, size)
+
+def load_bmp_to_vector(filepath):
+    img1 = Image.open(filepath + "/kot1.BMP")
+    img2 = Image.open(filepath + "/kot2.BMP")
+    
+    # Convert the images to grayscale (L mode)
+    grayscale_img1 = img1.convert("L")
+    grayscale_img2 = img2.convert("L")
+
+    # Convert the grayscale images to binary (-1, 1)
+    binary_array1 = np.where(np.array(grayscale_img1) > 127, 1, -1)
+    binary_array2 = np.where(np.array(grayscale_img2) > 127, 1, -1)
+
+    # Flatten the binary arrays into 1D vectors
+    vector1 = binary_array1.flatten()
+    vector2 = binary_array2.flatten()
+    
+    # Combine vectors into a single 2D array
+    patterns = np.array([vector1, vector2])
+    
+    # Train Hopfield network with the binary image data
+    weights = train_hopfield(patterns, 'heb')  
+    
+    # Generate a noisy version of one pattern
+    noisy_sample = np.random.choice([1, -1], size=grayscale_img1.size[1]*grayscale_img1.size[0])
+    
+    # Recover the noisy pattern using async update
+    states = async_update(weights, noisy_sample, patterns,timeout=1000)
+    
+    # Plot the states during the recovery process
+    plot_iteration_animation(states, grayscale_img1.size)
+
+    
 if __name__ == "__main__":
     path = "S:\SN\proj 2\Hopfield_Network\klastrowanie";
 
@@ -305,12 +349,15 @@ if __name__ == "__main__":
     (7, 7)
     ]
     pack = zip(file_paths, sizes)
-
-    # evaluate_recovery(file_paths, sizes, noise_trials=10, noise_level=0.1)
-
-    #main(path +'/large-25x25.csv', (25, 25)) #main(os.getcwd() +'/klastrowanie/large-25x25.csv', (25, 25))
-    all_stable_test()    
-    generate_stable_patterns(5,13)
+    #load_bmp_to_vector(path)
+    #evaluate_recovery(file_paths, sizes, noise_trials=10, noise_level=0.1)
+    random_sample(path +'/large-25x25.csv', (25, 25))
+    #main(path +'/large-25x50.csv', (25, 50)) #main(os.getcwd() +'/klastrowanie/large-25x25.csv', (25, 25))
+    #all_stable_test()    
+    #generate_stable_patterns(5,13)
     #oscylacja()
-    # for i in range(len(sizes)):
-    #     visualize_patterns(file_paths[i], sizes[i])
+    #for i in range(len(sizes)):
+    #    visualize_patterns(file_paths[i], sizes[i])
+
+
+

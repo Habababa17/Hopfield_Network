@@ -323,9 +323,32 @@ def load_bmp_to_vector(filepath):
     # Plot the states during the recovery process
     plot_iteration_animation(states, grayscale_img1.size)
 
+def find_max_stable_patterns(N):
+    max_patterns = 0
+    stable_patterns = []
+    unstable = False
+
+    while not unstable:
+        new_pattern = np.random.choice([1, -1], size=N * N)
+        candidate_patterns = np.array(stable_patterns + [new_pattern])
+
+        weights = train_hopfield(candidate_patterns, 'heb')
+
+        for pattern in candidate_patterns:
+            if not is_stable(pattern, weights):
+                unstable = True
+                break
+
+        if not unstable:
+            stable_patterns.append(new_pattern)
+            max_patterns += 1
+
+    print(f"\nMaksymalna liczba stabilnych wzorców: {max_patterns}")
+    return np.array(stable_patterns), weights
+
     
 if __name__ == "__main__":
-    path = "S:\SN\proj 2\Hopfield_Network\klastrowanie";
+    path = "S:\SN\proj 2\Hopfield_Network\klastrowanie"
 
     file_paths = [
     path + '/animals-14x9.csv',
@@ -360,4 +383,18 @@ if __name__ == "__main__":
     #    visualize_patterns(file_paths[i], sizes[i])
 
 
+    # best_patterns = []
+    # num_trials = 10000
+    # N = 5 
 
+    # for trial in range(num_trials):
+    #     patterns, weights = find_max_stable_patterns(N)
+
+    #     if len(patterns) > len(best_patterns):
+    #         best_patterns = patterns
+
+    # print(f"Liczba stabilnych wzorców: {len(best_patterns)}\n")
+
+    # print("Najlepsze wygenerowane wzorce:")
+    # for i, pattern in enumerate(best_patterns):
+    #     print(f"Wzorzec {i + 1}:\n{np.reshape(pattern, (N, N))}\n")
